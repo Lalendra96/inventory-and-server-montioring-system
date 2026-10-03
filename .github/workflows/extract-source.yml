@@ -1,0 +1,60 @@
+name: Extract Laravel source archive
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'releases/THP_HIMU_ICT_Operations_Laravel12_Build4_Source.tar.gz'
+      - '.github/workflows/extract-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract-source:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract clean Laravel source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          ARCHIVE='releases/THP_HIMU_ICT_Operations_Laravel12_Build4_Source.tar.gz'
+          WORKDIR="$(mktemp -d)"
+
+          tar -xzf "$ARCHIVE" -C "$WORKDIR"
+
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='releases/' \
+            --exclude='README.md' \
+            "$WORKDIR/" ./
+
+          rm -rf "$WORKDIR"
+
+      - name: Commit extracted application source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+
+          git commit -m 'Extract Laravel 12 HIMU Build 4 source [skip ci]'
+          git push origin HEAD:main
