@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# HIMU governed remote process/service control helper.
+# Install as /usr/local/sbin/himu-opsctl, owner root:root, mode 0755.
+set -euo pipefail
+
+ALLOW_FILE="/etc/himu-monitor/services.allow"
+LOG_TAG="himu-opsctl"
+
+fail() {
+    logger -t "$LOG_TAG" -- "DENIED user=${SUDO_USER:-unknown} action=$*"
+    echo "$*" >&2
+    exit 2
+}
+
+valid_service() {
+    local service="$1"
+    [[ "$service" =~ ^[A-Za-z0-9_.@:-]+$ ]] || return 1
+    [[ -f "$ALLOW_FILE" ]] || return 1
+    grep -Fxq -- "$service" "$ALLOW_FILE"
+}
+
+protected_process() {
+    local pid="$1"
+    (( pid > 100 )) || return 0
+    local details
+    details="$(ps -p "$pid" -o comm=,args= 2>/dev/null || true)"
+    [[ -n "$details" ]] || return 0
+    details="${details,,}"
+    case "$details" in
+        *systemd*|*" init "*|*sshd*|*" ssh "*|*dbus-daemon*|*systemd-journald*|*himu-opsctl*) return 0 ;;
+    esac
+    return 1
+}
+
+[[ $# -ge 1 ]] || fail "Missing operation"
+case "$1" in
+    process)
+        [[ $# -eq 3 ]] || fail "Usage: process PID TERM|KILL"
+        pid="$2"; signal="$3"
+        [[ "$pid" =~ ^[0-9]+$ ]] || fail "Invalid PID"
+        [[ "$signal" == "TERM" || "$signal" == "KILL" ]] || fail "Invalid signal"
+        kill -0 "$pid" 2>/dev/null || fail "Process not running"
+        protected_process "$pid" && fail "Protected process"
+        /bin/kill -"$signal" -- "$pid"
+        logger -t "$LOG_TAG" -- "ALLOWED user=${SUDO_USER:-unknown} process pid=$pid signal=$signal"
+        ;;
+    service)
+        [[ $# -eq 3 ]] || fail "Usage: service SERVICE start|stop|restart"
+        service="$2"; operation="$3"
+        [[ "$operation" == "start" || "$operation" == "stop" || "$operation" == "restart" ]] || fail "Invalid service operation"
+        valid_service "$service" || fail "Service is not allow-listed"
+        /bin/systemctl "$operation" "$service"
+        logger -t "$LOG_TAG" -- "ALLOWED user=${SUDO_USER:-unknown} service=$service operation=$operation"
+        ;;
+    *) fail "Unsupported operation" ;;
+esac
